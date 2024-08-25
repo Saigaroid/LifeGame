@@ -23,6 +23,7 @@ class MainActivity : ComponentActivity() {
     private var cellUpdateThread: Thread? = null
     private var canvasView: GridCanvasView? = null
     private var gameOverTxt: TextView? = null
+    private val handler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,7 +37,7 @@ class MainActivity : ComponentActivity() {
             canvas.post {
                 cellMap = Array(canvas.height / CELL_SIZE) {
                     List(canvas.width / CELL_SIZE) {
-                        if ((0 .. 5).random() == 0) Cell(ALIVE)
+                        if ((0..5).random() == 0) Cell(ALIVE)
                         else Cell(DEATH)
                     }.toTypedArray()
                 }
@@ -57,31 +58,29 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stop() {
-        cellUpdateThread?.let { thread ->
-            thread.join()
-            thread.interrupt()
-        }
+        cellUpdateThread?.interrupt()
         cellUpdateThread = null
 
-        Handler(Looper.getMainLooper()).post {
+        handler.post {
             gameOverTxt?.visibility = VISIBLE
         }
     }
 
     private fun redraw(map: Array<Array<Cell>>) {
-        Handler(Looper.getMainLooper()).post {
+        handler.post {
             canvasView?.update(map.clone())
         }
     }
 
     private fun updateAllCellState(map: Array<Array<Cell>>) {
+        val newMap = map.map { row -> row.map { it.clone() }.toTypedArray() }.toTypedArray()
         var updated = false
 
         for (y in map.indices) {
             for (x in map[y].indices) {
                 val aroundAliveCnt = getAroundCellNum(map, x, y)
-                val cell = map[y][x]
-                val curState = cell.state
+                val cell = newMap[y][x]
+                val curState = map[y][x].state
 
                 if (curState == DEATH) {
                     if (aroundAliveCnt == 3) {
@@ -89,7 +88,7 @@ class MainActivity : ComponentActivity() {
                         updated = true
                     }
                 } else {
-                    if (aroundAliveCnt !in 2 .. 3) {
+                    if (aroundAliveCnt !in 2..3) {
                         cell.state = DEATH
                         updated = true
                     }
@@ -98,50 +97,36 @@ class MainActivity : ComponentActivity() {
         }
 
         if (!updated) stop()
+        cellMap = newMap
     }
 
-    private fun getAroundCellNum(map: Array<Array<Cell>>,
-                                 x: Int,
-                                 y: Int): Int {
-        fun top(): Cell = map[y - 1][x]
-        fun bottom(): Cell = map[y + 1][x]
-        fun left(): Cell = map[y][x - 1]
-        fun right(): Cell = map[y][x + 1]
-        fun topLeft(): Cell = map[y - 1][x - 1]
-        fun bottomLeft(): Cell = map[y + 1][x - 1]
-        fun topRight(): Cell = map[y - 1][x + 1]
-        fun bottomRight(): Cell = map[y + 1][x + 1]
-
-        fun isAlive(cell: Cell): Boolean = cell.state == ALIVE
+    private fun getAroundCellNum(map: Array<Array<Cell>>, x: Int, y: Int): Int {
+        val directions = listOf(
+            -1 to -1, -1 to 0, -1 to 1,
+            0 to -1, 0 to 1,
+            1 to -1, 1 to 0, 1 to 1
+        )
 
         var cnt = 0
-
-        // top
-        if (y - 1 in map.indices && isAlive(top())) cnt++
-
-        // bottom
-        if (y + 1 in map.indices && isAlive(bottom())) cnt++
-
-        // left
-        if (x - 1 in map[y].indices) {
-            if (y - 1 in map.indices && isAlive(topLeft())) cnt++
-            if (isAlive(left())) cnt++
-            if (y + 1 in map.indices && isAlive(bottomLeft())) cnt++
+        for ((dy, dx) in directions) {
+            val newY = y + dy
+            val newX = x + dx
+            if (newY in map.indices && newX in map[newY].indices && map[newY][newX].state == ALIVE) {
+                cnt++
+            }
         }
-
-        // right
-        if (x + 1 in map[y].indices) {
-            if (y - 1 in map.indices && isAlive(topRight())) cnt++
-            if (isAlive(right())) cnt++
-            if (y + 1 in map.indices && isAlive(bottomRight())) cnt++
-        }
-
         return cnt
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        handler.removeCallbacksAndMessages(null)
+        cellUpdateThread?.interrupt()
     }
 
     private inner class CellUpdateThread : Thread() {
         override fun run() {
-            while (true) {
+            while (!isInterrupted) {
                 try {
                     updateAllCellState(cellMap)
                     redraw(cellMap)
